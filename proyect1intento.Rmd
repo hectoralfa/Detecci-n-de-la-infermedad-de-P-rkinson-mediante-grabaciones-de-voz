@@ -1,0 +1,404 @@
+---
+output: pdf_document
+---
+
+```{r}
+rm(list = ls(all.names = TRUE))
+gc()
+```
+
+
+Nuestra base de datos es sobre el diagnostico de la enfermedad de Párkinson.
+Está base de datos esta compuesta por grabaciones de voz de 31 personas, 23 de ellas padecen la enfermedad de Párkinson y 8 no la padecen. Cada persona cuenta con 6 grabaciones de voz, en total tenemos 195 grabaciones de voz.
+El objetivo es hacer una regresion logística mediante estadística bayesiana. 
+
+Para fines de este proyecto trataremos cada grabación de voz como una persona, es decir, en la base de datos contamos con 195 grabaciones de voz.
+
+Veamos las variables con las que contamos.
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+library(GGally)
+library(dplyr)
+library(tinytex)
+library(ggplot2)
+library(corrplot)
+library(readr)
+D1 <- read_csv("C:/Users/Lenovo-L430/Downloads/D1.csv")# Pacientes con Párkinson
+D0 <- read_csv("C:/Users/Lenovo-L430/Downloads/D0.csv")# Pacientes sin Párkinson
+```
+# Podemos ver que contamos con la siguientes variables.
+
+* name - son las grabaciones que tenemos por cada persona (6 por persona) 
+
+* MDVP:Fo(Hz) - Nota que es más comoda para el ser humano. 
+
+* MDVP:Fhi(Hz) - Máxima nota que en promedio puede hacer el ser humano.
+
+* MDVP:Flo(Hz) - Minima nota que en promedio puede hacer el ser humano.
+
+* MDVP:Jitter(%), MDVP:Jitter(Abs) - Representa en porcentajes o en términos relativos la variación del périodo  
+
+* MDVP:RAP, MDVP:PPQ - Para minimizar los errores acusticos, se promedian 3 o 5 périodos consecutivos respectivamente.  
+
+* Jitter:DDP - Denota la diferencia absoluta promedio de las diferencias entre los ciclos de fluctuación.
+
+* MDVP:Shimmer, MDVP:Shimmer(dB),Shimmer:APQ3,Shimmer:APQ5,MDVP:APQ,Shimmer:DDA - Son medidas analogas a Jitter, aunque estan medidas por la amplitud y no por la frecuencia.
+
+* NHR,HNR - Es la relación de ruido a armónicos y la relación de armónicos a ruido de las señales acústicas.
+
+* status - Pacientes que padecen Párkinson (1), (0) - No padecen Párkison.
+
+* RPDE,D2 - Dos medidas no lineales, la entropía de densidad del período de recurrencia y la dimensión de correlación respectivamente.
+
+* DFA - Análisis de fluctuación sin tendencia
+
+* PPE - Entropía del período de tono. 
+
+* spread1,spread2 - Medidas no lineales de variación de frecuencia fundamental.
+
+Cabe señalar que MDVP es un programa usado para medir distintos parámetros de grabaciones de sonidos, se ocupan para la medicina y tienen rangos de valores normales
+
+# Análisis descriptivo.
+
+Vamos a ver si de alguna manera podemos seleccionar variables que no tengan tanta importancia en nuestra base de datos.
+
+Debido a que la mayoría de la base de datos, tenemos más de la mitad de los pacientes que padecen la enfermedad de Párkinson, y con fines para un mejor clasificación, seleccionaremos proporciones cercanas del número de pacientes enfermos y paciente no enfermos.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+D1<-subset(D1, select = -c(X1, name)) #eliminamos columnas que no nos interesan.
+D0<-subset(D0, select = -c(X1, name))
+
+df<-rbind(D1,D0) #juntamos ambos df
+df$status<-as.factor(df$status)
+
+ggcorr(df)
+summary(df$status)
+```
+
+
+En la grafica de correlacion, vemos que las variables MDVP.Fo.Hz, MDVP.Fhi.Hz, MDVP.Flo.Hz y DFA.
+Además notamos que hay 25 personas que no padecen Párkison y 99 que si la padecen.
+
+Primero haremos nuestro modelo logit con herramienta de estadistica frecuentista y depués lo haremos con herramienta bayesiana.
+
+# Selección de variables
+
+Hagamos nuestra selección de variables mediante el método por pasos.
+
+Este método compara el criterio de optimización al agregar (forward), quitar (backward), o ambos (both) una variable al modelo que se analiza.
+
+Como base, usaremos el modelo saturado y el modelo que solamente tiene el intercept.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(glmnet)
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+
+fit1=glm(status~., family = binomial(link="logit"), data=df)
+
+nothing = glm(status~1, family = binomial(link="logit"), data=df)
+
+ndatos=dim(df)[1]
+```
+Probemos con AIC y forward
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+modelStepfAIC=step(glm(status~1, family = binomial(link="logit"), data=df), direction = c("forward"), scope=list(lower=nothing,upper=fit1), trace=FALSE)
+summary(modelStepfAIC) 
+```
+
+Podemos notar que la selección de variables sugiere que juguemos con:
+
+_spread1,D2, MDVP.Flo.Hz., NHR, HNR, DFA, MDVP.Jitter.Abs._
+
+Ahora intentemos con BIC forward
+
+```{r, echo=FALSE}
+modelStepfBIC=step(glm(status~1, family = binomial(link="logit"), data=df), direction = c("forward"), scope=list(lower=nothing,upper=fit1), trace=FALSE,  k=log(ndatos) )
+summary(modelStepfBIC) 
+```
+
+Aquí nos sugiere que juguemos con 3 variables: _spread1, MDVP.Flo.Hz., D2_
+
+Ahora intentemos con el BIC backward
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+modelStepbBIC=step(glm(status~., family = binomial(link="logit"), data=df), direction = c("backward"), scope=list(lower=nothing,upper=fit1), trace=FALSE,  k=log(ndatos) )
+summary(modelStepbBIC) 
+
+```
+
+el modelo plantea más variables a consederar, las cuales son :
+_MDVP.Flo.Hz.,MDVP.Jitter...,MDVP.RAP, MDVP.PPQ, MDVP.Shimmer.dB.,Shimmer.APQ5,NHR,spread2, D2_
+
+__Poder predictivo__
+
+Vamos probar estos métodos, y ver cual nos conviene basandonos en el porcentaje de error, esto será con ayuda de validación cruzada.
+
+La razón es porque nuestra base de datos es pequeña, y consiste de la siguiente manera.
+
+1. Para k=1,...,K. 
+Se elimina la k-ésima parte y el ajuste del modelo se realiza con las k-1 partes restante cada elemento en la k-ésima parte se clasifica con el modelo ajustando.
+
+2. Usando la clasificaciÃ³n obtenida se calcula un porcentaje de error.
+
+3. Este procedimiento se repite M= 100 o 1000 veces. Al final, se promedian los M porcentajes de error de clasificación
+
+
+Usemos la validación cruzada para nuestros posibles modelos hechos en la selección de variables.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(123)
+k_folds = 10
+runs=100
+cv_tmp <- matrix(NA, nrow = k_folds, ncol = runs)
+cv_tmp1 <- matrix(NA, nrow = k_folds, ncol = runs)
+cv_tmp0 <- matrix(NA, nrow = k_folds, ncol = runs)
+for(r in 1:runs){
+  folds_i <- sample(rep(1:k_folds, length.out = ndatos))
+  for (k in 1:k_folds) {
+    test_i <- which(folds_i == k)
+    train <- df[-test_i,]
+    test <- df[test_i, -which(colnames(df)=="status")]
+    observed = df[test_i, which(colnames(df)=="status")]
+    model <- glm(formula(modelStepfAIC), family = binomial(link="logit"), data=train)
+    predicted=( (predict(model, newdata =test,  type = c("response") ) )>=.5 )*1
+    error=sum(observed!=predicted)
+    cv_tmp[k, r] <- error
+    error1=sum(observed[observed==1]!=predicted[observed==1]) 
+    error0=sum(observed[observed==0]!=predicted[observed==0])  
+    cv_tmp1[k, r] <- error1
+    cv_tmp0[k, r] <- error0
+  }}
+```
+
+Veamos el porcentaje de error.
+
+```{r, echo=TRUE}
+cv_StepfAIC <- colSums(cv_tmp)/ndatos
+mean(cv_StepfAIC)
+
+cv_StepfAIC1 <- colSums(cv_tmp1)/sum(df$status==1)
+mean(cv_StepfAIC1)
+
+cv_StepfAIC0 <- colSums(cv_tmp0)/sum(df$status==0)
+mean(cv_StepfAIC0)
+```
+Notamos que el porcentaje de error global es del 11\% mientras que para el grupo con Párkison el porcentaje de error es pequeño (5\%), aunque para los que no padecen de esta enfermedad el porcentaje es muy grande.
+
+
+Intentemos ver lo que pasa con nuestro siguiente modelo _BIC forward_
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+for(r in 1:runs){
+  folds_i <- sample(rep(1:k_folds, length.out = ndatos))
+  for (k in 1:k_folds) {
+    test_i <- which(folds_i == k)
+    train <- df[-test_i,]
+    test <- df[test_i, -which(colnames(df)=="status")]
+    observed = df[test_i, which(colnames(df)=="status")]
+    model <- glm(formula(modelStepfBIC), family = binomial(link="logit"), data=train)
+    predicted=( (predict(model, newdata =test,  type = c("response") ) )>=.5 )*1
+    error=sum(observed!=predicted)
+    cv_tmp[k, r] <- error
+    error1=sum(observed[observed==1]!=predicted[observed==1]) 
+    error0=sum(observed[observed==0]!=predicted[observed==0])  
+    cv_tmp1[k, r] <- error1
+    cv_tmp0[k, r] <- error0
+  }}
+
+```
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+cv_StepfBIC <- colSums(cv_tmp)/ndatos
+mean(cv_StepfBIC)
+
+cv_StepfBIC1 <- colSums(cv_tmp1)/sum(df$status==1)
+mean(cv_StepfBIC1)
+
+cv_StepfBIC0 <- colSums(cv_tmp0)/sum(df$status==0)
+mean(cv_StepfBIC0)
+
+```
+Notamos que el error global es un poco más alto, el error para los pacientes con Párkinson es parecido al primer modelo, mientras que aumenta el error para los que no paceden esta enfermedad.
+
+
+
+Por último intentemos con el modelo _BIC barckward_ 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+for(r in 1:runs){
+  folds_i <- sample(rep(1:k_folds, length.out = ndatos))
+  for (k in 1:k_folds) {
+    test_i <- which(folds_i == k)
+    train <- df[-test_i,]
+    test <- df[test_i, -which(colnames(df)=="status")]
+    observed = df[test_i, which(colnames(df)=="status")]
+    model <- glm(formula(modelStepbBIC), family = binomial(link="logit"), data=train)
+    predicted=( (predict(model, newdata =test,  type = c("response") ) )>=.5 )*1
+    error=sum(observed!=predicted)
+    cv_tmp[k, r] <- error
+    error1=sum(observed[observed==1]!=predicted[observed==1]) 
+    error0=sum(observed[observed==0]!=predicted[observed==0])  
+    cv_tmp1[k, r] <- error1
+    cv_tmp0[k, r] <- error0
+  }}
+
+```
+
+Con su respectivo porcentaje de error.
+
+```{r, echo=TRUE}
+
+cv_StepbBIC <- colSums(cv_tmp)/ndatos
+mean(cv_StepbBIC)
+
+cv_StepbBIC1 <- colSums(cv_tmp1)/sum(df$status==1)
+mean(cv_StepbBIC1)
+
+cv_StepbBIC0 <- colSums(cv_tmp0)/sum(df$status==0)
+mean(cv_StepbBIC0)
+```
+Sigue en aumento el error global, y ahora el error para los que padecen de Párkinson es mayor, aunque baja el error para los que no  padecen de esta enfermedad.
+
+
+Ahora comparemos los modelos y seleccionemos el que tenga el menor error global.
+
+```{r, echo=TRUE}
+
+c(mean(cv_StepfAIC),mean(cv_StepfBIC),mean(cv_StepbBIC))
+
+```
+El modelo que elegimos es el de AIC, ya que tiene un porcentaje de error del 11\%, además de que el porcentaje de que nos equivoquemos respecto a los pacientes que padecen de Párkinson es del 5\%.
+
+# Con Bayesiana
+
+Veamos el contraste con estadistica Bayesiana.
+
+Primero ajustemos nuestra matriz de diseño, escalando los datos.
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(rjags)
+D1 <- read_csv("C:/Users/Lenovo-L430/Downloads/D1.csv")# Pacientes con Párkinson
+D0 <- read_csv("C:/Users/Lenovo-L430/Downloads/D0.csv")# Pacientes sin Párkinson
+
+D1<-subset(D1, select = -c(X1, name)) #eliminamos columnas que no nos interesan.
+D0<-subset(D0, select = -c(X1, name))
+
+datos<-rbind(D1,D0)
+datos$status<-as.numeric(datos$status)
+
+X=scale(datos[,-17], center = TRUE, scale = TRUE)
+head(X)
+apply(X, 2, sd)
+```
+
+_Selección de varibles_
+
+Haremos una selección de varibles, basandonos en nuestro modelo saturado, y respecto a los histogramas tomaremos una decisón para nuestro modelo.
+
+
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+data <- list(y =datos$status,
+             x1=X[,"MDVP.Fo.Hz."],
+             x2=X[,"MDVP.Fhi.Hz."],
+             x3=X[,"MDVP.Flo.Hz."],
+             x4=X[,"MDVP.Jitter..."],
+             x5=X[,"MDVP.Jitter.Abs."],
+             x6=X[,"MDVP.RAP"],
+             x7=X[,"MDVP.PPQ"],
+             x8=X[,"Jitter.DDP"],
+             x9=X[,"MDVP.Shimmer"],
+             x10=X[,"MDVP.Shimmer.dB."],
+             x11=X[,"Shimmer.APQ3"],
+             x12=X[,"Shimmer.APQ5"],
+             x13=X[,"MDVP.APQ"],
+             x14=X[,"Shimmer.DDA"],
+             x15=X[,"NHR"],
+             x16=X[,"HNR"],
+             x17=X[,"RPDE"],
+             x18=X[,"DFA"],
+             x19=X[,"spread1"],
+             x20=X[,"spread2"],
+             x21=X[,"D2"],
+             x22=X[,"PPE"],
+             n=length(datos$status)
+)
+
+param <- c("betas", "alpha")
+
+inits <- function(){	list(
+  "betas" = rnorm(22,0,1) 
+)	}
+
+```
+
+Ajustando el modelo.
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+setwd("C:/Users/Lenovo-L430/Downloads")
+
+fit <- jags.model("ddexp.bug", data,inits, n.chains=3)
+update(fit,5000)
+sample <- coda.samples(fit, param, n.iter=10000, thin=1)
+```
+viazualización.
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.show='hide'}
+par(mar=c(1,1,1,1))
+summary(sample)
+plot(sample)
+#gelman.plot(sample)
+
+```
+
+```{r, echo=TRUE}
+par(mfrow=c(3,2))
+densplot(sample[,1:23], xlim = c(-3.5,4.0))
+```
+
+Podemos notar que  x3= MDVP.Flo.Hz. , x15=NHR ,x17 = RPDE, x20=spread2 ,x21=D2 no estan centradas en el cero, por lo que seleccionaremos estas variables.
+
+
+```{r, echo=TRUE}
+data1 <- list(y =datos$status,
+             x1=X[,"MDVP.Flo.Hz."],
+             x2=X[,"NHR"],
+             x3=X[,"RPDE"],
+             x4=X[,"spread2"],
+             x5=X[,"D2"],
+             n=length(datos$status)
+)
+
+param <- c("betas", "alpha")
+
+inits <- function(){	list(
+  "betas" = rnorm(5,0,1) 
+)	}
+
+```
+
+```{r,echo=TRUE}
+setwd("C:/Users/Lenovo-L430/Downloads")
+
+fit1 <- jags.model("primerbay.bug", data1,inits, n.chains=3)
+update(fit,5000)
+sample1 <- coda.samples(fit1, param, n.iter=10000, thin=1)
+
+```
+```{r}
+par(mar=c(1,1,1,1))
+summary(sample1)
+plot(sample1)
+par(mfrow=c(3,2))
+densplot(sample[,1:6], xlim = c(-3.5,4.0))
+```
+
+
+```{r, echo=TRUE}
+dic0=dic.samples(fit, n.iter = 1e3)
+dic0
+
+dic1=dic.samples(fit1, n.iter = 1e3)
+dic1
+```
+
